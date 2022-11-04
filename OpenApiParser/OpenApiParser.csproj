@@ -8,7 +8,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="CsvHelper" Version="30.0.0" />
+    <PackageReference Include="Google.Apis.Sheets.v4" Version="1.57.0.2826" />
   </ItemGroup>
 
 </Project>
