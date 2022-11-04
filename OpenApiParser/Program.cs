@@ -92,38 +92,12 @@ internal class Program
             }
             else if (state == State.INPUT_DATA)
             {
-                var prop = new Property();
+                var (p, e) = ParseFieldLine(line);
 
-                // Field
-                prop = prop with { Field = line[0] };
+                endpoint.Input.Add(p);
 
-                // Type
-                prop = prop with { Type = line[1] };
-
-                // Required
-                string? descSuffix = default;
-                if (line[2] == "always" || line[2] == "required")
-                    prop = prop with { Required = true };
-                else if (line[2] == "optional")
-                    prop = prop with { Required = false };
-                else
-                {
-                    prop = prop with { Required = false };
-                    descSuffix = line[2];
-                }
-
-                // Description
-                if (string.IsNullOrEmpty(descSuffix))
-                    prop = prop with { Description = line[3] };
-                else
-                    prop = prop with { Description = line[3] + '\n' + descSuffix };
-
-                endpoint.Input.Add(prop);
-
-                // JSON Example
-                if (line.HasIndex(4))
-                    if (line[4].Contains('{'))
-                        endpoint = endpoint with { InputExample = line[4] };
+                if (!string.IsNullOrWhiteSpace(e))
+                    endpoint = endpoint with { InputExample = e };
 
                 // Look ahead if this is the end
                 if (!lines[i + 1].Any())
@@ -131,14 +105,33 @@ internal class Program
             }
             else if (state == State.OUTPUT_DATA_SEEK)
             {
-                if (line.First() == "Provided output data")
+                if (line.First() == "Requested output data")
                     state = State.OUTPUT_DATA;
                 else
                     throw new Exception();
             }
+            else if (state == State.OUTPUT_DATA)
+            {
+                //var (p, e) = ParseFieldLine(line);
+
+                //endpoint.Output.Add(p);
+
+                //if (!string.IsNullOrWhiteSpace(e))
+                //    endpoint = endpoint with { OutputExample = e };
+            }
         }
 
-        var doc = new OpenApiDocument
+        OpenApiDocument doc = CreateOpenApiDoc(endpoint);
+        using var sw = new StringWriter();
+        //var tw = new TextWriter())
+        var w = new OpenApiYamlWriter(sw);
+        doc.SerializeAsV3(w);
+        var openApiText = sw.ToString();
+    }
+
+    private static OpenApiDocument CreateOpenApiDoc(Endpoint endpoint)
+    {
+        return new OpenApiDocument
         {
             Info = new OpenApiInfo
             {
@@ -177,7 +170,7 @@ internal class Program
                                                 Value = new OpenApiString(endpoint.InputExample)
                                             }
                                         }
-                                        
+
                                     }
                                 }
                             }
@@ -186,15 +179,45 @@ internal class Program
                 }
             }
         };
-
-        using var s = new StringWriter();
-        //var tw = new TextWriter())
-        var writer = new OpenApiYamlWriter(s);
-        doc.SerializeAsV3(writer);
-        var xxxxxxxxx = s.ToString();
     }
 
-   
+    private static (Property p, string? InputExample) ParseFieldLine(List<string> line)
+    {
+        var prop = new Property();
+
+        // Field
+        prop = prop with { Field = line[0] };
+
+        // Type
+        prop = prop with { Type = line[1] };
+
+        // Required
+        string? descSuffix = default;
+        if (line[2] == "always" || line[2] == "required")
+            prop = prop with { Required = true };
+        else if (line[2] == "optional")
+            prop = prop with { Required = false };
+        else
+        {
+            prop = prop with { Required = false };
+            descSuffix = line[2];
+        }
+
+        // Description
+        if (string.IsNullOrEmpty(descSuffix))
+            prop = prop with { Description = line[3] };
+        else
+            prop = prop with { Description = line[3] + '\n' + descSuffix };
+
+        // JSON Example
+        string? example = default;
+        if (line.HasIndex(4))
+            if (line[4].Contains('{'))
+                example = line[4];
+
+        return (prop, example);
+    }
+
 
     enum State
     {
@@ -205,6 +228,11 @@ internal class Program
         INPUT_DATA,
         OUTPUT_DATA_SEEK,
         OUTPUT_DATA
+    }
+    enum SubState
+    {
+        NORMAL,
+        ARRAY
     }
 
     //    private static File[] GetFiles()
