@@ -129,6 +129,13 @@ internal class Program
                 if (!lines[i + 1].Any())
                     state = State.OUTPUT_DATA_SEEK;
             }
+            else if (state == State.OUTPUT_DATA_SEEK)
+            {
+                if (line.First() == "Provided output data")
+                    state = State.OUTPUT_DATA;
+                else
+                    throw new Exception();
+            }
         }
 
         var doc = new OpenApiDocument
@@ -196,7 +203,8 @@ internal class Program
         INPUT_DATA_SEEK,
         INPUT_DATA_HEADER,
         INPUT_DATA,
-        OUTPUT_DATA_SEEK
+        OUTPUT_DATA_SEEK,
+        OUTPUT_DATA
     }
 
     //    private static File[] GetFiles()
