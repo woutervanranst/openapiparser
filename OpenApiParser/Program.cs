@@ -52,22 +52,24 @@ internal class Program
     {
         var state = State.TITLE;
 
-        string title;
-        string description;
+        string endpointName;
+        string endpointDescription;
 
-        foreach (var line in lines)
+        for (int i = 0; i < lines.Count; i++)
         {
+            List<string>? line = lines[i];
+
             if (!line.Any())
                 continue;
 
             if (state == State.TITLE)
             {
-                title = line.Single();
+                endpointName = line.Single();
                 state = State.DESCRIPTION;
             }
             else if (state == State.DESCRIPTION)
             {
-                description = line.Single();
+                endpointDescription = line.Single();
                 state = State.INPUT_DATA_SEEK;
             }
             else if (state == State.INPUT_DATA_SEEK)
@@ -86,28 +88,31 @@ internal class Program
             }
             else if (state == State.INPUT_DATA)
             {
+                var prop = new Property();
+
                 // Field
-                var field = line[0];
+                prop = prop with { Field = line[0] };
 
                 // Type
-                var type = line[1];
+                prop = prop with { Type = line[1] };
 
                 // Required
-                bool required;
                 if (line[2] == "always" || line[2] == "required")
-                    required = true;
+                    prop = prop with { Required = true };
                 else if (line[2] == "optional")
-                    required = false;
+                    prop = prop with { Required = false };
                 else
                     throw new Exception();
 
                 // Description
-                var descr = line[3];
+                prop = prop with { Description = line[3] };
 
                 // JSON Example
-                var example = line[4];
+                string example;
+                if (line.Count >= 4)
+                    if (line[4].Contains('{'))
+                        example = line[4];
 
-                //var prop = new Property(line[0], )
 
             }
         }
@@ -131,9 +136,8 @@ internal class Program
     //    }
 
     //    record File(string Path);
-    record Parse(string Title, string Description);
+    record Endpoint(string? Name = null, string? Description = null, List<Property> Input = new(), string? InputExample = null, Property[] Output, string? OutputExample = null);
 
     record Array(Property[] Proprerties);
-    record Property(string Field, string Type, bool Required, string Description);
-
+    record Property(string? Field = null, string? Type = null, bool? Required = null, string? Description = null);
 }
