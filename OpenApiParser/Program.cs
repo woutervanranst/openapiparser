@@ -52,8 +52,7 @@ internal class Program
     {
         var state = State.TITLE;
 
-        string endpointName;
-        string endpointDescription;
+        var endpoint = new Endpoint();
 
         for (int i = 0; i < lines.Count; i++)
         {
@@ -64,12 +63,12 @@ internal class Program
 
             if (state == State.TITLE)
             {
-                endpointName = line.Single();
+                endpoint = endpoint with { Name = line.Single() };
                 state = State.DESCRIPTION;
             }
             else if (state == State.DESCRIPTION)
             {
-                endpointDescription = line.Single();
+                endpoint = endpoint with { Description = line.Single() };
                 state = State.INPUT_DATA_SEEK;
             }
             else if (state == State.INPUT_DATA_SEEK)
@@ -107,16 +106,23 @@ internal class Program
                 // Description
                 prop = prop with { Description = line[3] };
 
+                endpoint.Input.Add(prop);
+
                 // JSON Example
-                string example;
-                if (line.Count >= 4)
+                if (line.HasIndex(4))
                     if (line[4].Contains('{'))
-                        example = line[4];
+                        endpoint = endpoint with { InputExample = line[4] };
+
+                // Look ahead if this is the end
+                if (!lines[i + 1].Any())
+                    endpoint = endpoint with { Input = }
 
 
             }
         }
     }
+
+   
 
     enum State
     {
@@ -136,8 +142,23 @@ internal class Program
     //    }
 
     //    record File(string Path);
-    record Endpoint(string? Name = null, string? Description = null, List<Property> Input = new(), string? InputExample = null, Property[] Output, string? OutputExample = null);
+    record Endpoint(string? Name, string? Description, List<Property> Input, string? InputExample, List<Property> Output, string? OutputExample)
+    {
+        public Endpoint() : this(null, null, new(), null, new(), null) 
+        { 
+        }
+    }
 
     record Array(Property[] Proprerties);
     record Property(string? Field = null, string? Type = null, bool? Required = null, string? Description = null);
+
+    
+}
+
+public static class Extensions
+{
+    public static bool HasIndex<T>(this IEnumerable<T> x, int index)
+    {
+        return x.Count() > index;
+    }
 }
