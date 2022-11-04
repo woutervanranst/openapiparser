@@ -6,6 +6,7 @@ using Google.Apis.Auth.OAuth2;
 using Google.Apis.Services;
 using Google.Apis.Sheets.v4;
 using Google.Apis.Sheets.v4.Data;
+using Microsoft.OpenApi.Any;
 using Microsoft.OpenApi.Models;
 using Microsoft.OpenApi.Writers;
 
@@ -156,24 +157,24 @@ internal class Program
                                         Schema = new OpenApiSchema
                                         {
                                             Type = "object",
-                                            Properties = new Dictionary<string, OpenApiSchema>()
+                                            Properties = endpoint.Input.ToDictionary(e => e.Field, e => new OpenApiSchema()
                                             {
-                                                ["ha"] = new OpenApiSchema()
-                                                {
-                                                    Type = "boolean"
-                                                }
+                                                Type = e.Type,
+                                                Description = e.Description
+                                            })
+                                        },
+                                        Examples = new Dictionary<string, OpenApiExample>
+                                        {
+                                            ["example"] = new OpenApiExample
+                                            {
+                                                Value = new OpenApiString(endpoint.InputExample)
                                             }
-                                            //Properties = endpoint.Input.ToDictionary()
                                         }
                                         
                                     }
                                 }
-                               
                             }
-                            
                         }
-                        
-                        
                     }
                 }
             }
