@@ -9,6 +9,7 @@
 
   <ItemGroup>
     <PackageReference Include="Google.Apis.Sheets.v4" Version="1.57.0.2826" />
+    <PackageReference Include="Microsoft.OpenApi" Version="1.4.3" />
   </ItemGroup>
 
 </Project>

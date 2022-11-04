@@ -6,6 +6,8 @@ using Google.Apis.Auth.OAuth2;
 using Google.Apis.Services;
 using Google.Apis.Sheets.v4;
 using Google.Apis.Sheets.v4.Data;
+using Microsoft.OpenApi.Models;
+using Microsoft.OpenApi.Writers;
 
 namespace OpenApiParser;
 internal class Program
@@ -29,6 +31,8 @@ internal class Program
     private static SheetsService GetSheetService()
     {
         // https://code-maze.com/google-sheets-api-with-net-core/
+        // Credential: https://console.cloud.google.com/apis/credentials?project=excelparser-367605&supportedpurview=project
+        // Service account: https://console.cloud.google.com/iam-admin/serviceaccounts/details/114154562945252957742;edit=true?project=excelparser-367605&supportedpurview=project
 
         GoogleCredential credential;
         using (var stream = new FileStream(@"C:\Users\woute\Downloads\excelparser-367605-603c41320f04.json", FileMode.Open, FileAccess.Read))
@@ -96,15 +100,22 @@ internal class Program
                 prop = prop with { Type = line[1] };
 
                 // Required
+                string? descSuffix = default;
                 if (line[2] == "always" || line[2] == "required")
                     prop = prop with { Required = true };
                 else if (line[2] == "optional")
                     prop = prop with { Required = false };
                 else
-                    throw new Exception();
+                {
+                    prop = prop with { Required = false };
+                    descSuffix = line[2];
+                }
 
                 // Description
-                prop = prop with { Description = line[3] };
+                if (string.IsNullOrEmpty(descSuffix))
+                    prop = prop with { Description = line[3] };
+                else
+                    prop = prop with { Description = line[3] + '\n' + descSuffix };
 
                 endpoint.Input.Add(prop);
 
@@ -115,11 +126,64 @@ internal class Program
 
                 // Look ahead if this is the end
                 if (!lines[i + 1].Any())
-                    endpoint = endpoint with { Input = }
-
-
+                    state = State.OUTPUT_DATA_SEEK;
             }
         }
+
+        var doc = new OpenApiDocument
+        {
+            Info = new OpenApiInfo
+            {
+                Version = "1.1.0",
+                Title = "InvestSuite Broker/Custodian Agnostic API"
+            },
+            Paths = new OpenApiPaths
+            {
+                ["/PendingOrders"] = new OpenApiPathItem
+                {
+                    Operations = new Dictionary<OperationType, OpenApiOperation>
+                    {
+                        [OperationType.Get] = new OpenApiOperation
+                        {
+                            Description = endpoint.Description,
+                            RequestBody = new OpenApiRequestBody
+                            {
+
+                                Content = new Dictionary<string, OpenApiMediaType>
+                                {
+                                    ["application/json"] = new OpenApiMediaType
+                                    {
+                                        Schema = new OpenApiSchema
+                                        {
+                                            Type = "object",
+                                            Properties = new Dictionary<string, OpenApiSchema>()
+                                            {
+                                                ["ha"] = new OpenApiSchema()
+                                                {
+                                                    Type = "boolean"
+                                                }
+                                            }
+                                            //Properties = endpoint.Input.ToDictionary()
+                                        }
+                                        
+                                    }
+                                }
+                               
+                            }
+                            
+                        }
+                        
+                        
+                    }
+                }
+            }
+        };
+
+        using var s = new StringWriter();
+        //var tw = new TextWriter())
+        var writer = new OpenApiYamlWriter(s);
+        doc.SerializeAsV3(writer);
+        var xxxxxxxxx = s.ToString();
     }
 
    
@@ -131,6 +195,7 @@ internal class Program
         INPUT_DATA_SEEK,
         INPUT_DATA_HEADER,
         INPUT_DATA,
+        OUTPUT_DATA_SEEK
     }
 
     //    private static File[] GetFiles()
