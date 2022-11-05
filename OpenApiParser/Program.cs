@@ -153,6 +153,7 @@ internal class Program
     private static (Property p, string? InputExample) ParseFieldLine(List<string> line)
     {
         var prop = new Property();
+        List<string> descSuffix = new();
 
         // Field
         prop = prop with { Field = line.ElementAtOrDefault(0) };
@@ -176,6 +177,7 @@ internal class Program
             }
             //else 
                 //if (enumValues == "The ISO 4217 currency code of the instrument currency.")
+                // ...
 
             enumValues = enumValues.TrimEnd('.');
             enumValues = enumValues.Trim();
@@ -183,12 +185,16 @@ internal class Program
             enumValues = enumValues.Replace(", ", ",");
             prop = prop with { EnumValues = enumValues.Split(',') };
         }
+        else if (type == "decimal" || type == "timestamp")
+        {
+            prop = prop with { Type = "number" };
+            descSuffix.Add($"Type: {type}");
+        }
         else
             prop = prop with { Type = type };
 
         // Required
         string req = line.ElementAtOrDefault(2);
-        string? descSuffix = default;
         if (req == "always" || req == "required")
             prop = prop with { Required = true };
         else if (req == "optional")
@@ -196,14 +202,14 @@ internal class Program
         else
         {
             prop = prop with { Required = false };
-            descSuffix = req;
+            descSuffix.Add(req);
         }
 
         // Description
-        if (string.IsNullOrEmpty(descSuffix))
-            prop = prop with { Description = line.ElementAtOrDefault(3) };
+        if (descSuffix.Any())
+            prop = prop with { Description = line.ElementAtOrDefault(3) + '\n' + String.Join('\n', descSuffix) };
         else
-            prop = prop with { Description = line.ElementAtOrDefault(3) + '\n' + descSuffix };
+            prop = prop with { Description = line.ElementAtOrDefault(3) };
 
         // JSON Example
         string? example = default;
