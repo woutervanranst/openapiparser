@@ -20,7 +20,7 @@ internal class Program
 
         var spreadsheetId = "1txAZ9ijlQbiwseeh87dOXfbEVT4DoNmb38hRON9PqaI";
 
-        var request = service.Spreadsheets.Values.Get(spreadsheetId, "GetPendingOrders");
+        var request = service.Spreadsheets.Values.Get(spreadsheetId, "GetCurrentOrders");
         var response = request.Execute();
         var values = response.Values
             .Select(x => x.Select(y => (string)y).ToList()).ToList();
@@ -56,7 +56,7 @@ internal class Program
         var state = State.TITLE;
 
         var endpoint = new Endpoint();
-        List<IProperty> addTo;
+        Stack<IList<IProperty>> addTo = new();
 
         for (int i = 0; i < lines.Count; i++)
         {
@@ -80,33 +80,47 @@ internal class Program
                 if (state == State.INPUT_DATA_SEEK && line.First() == "Provided input data")
                     state = State.INPUT_DATA_HEADER;
                 else if (state == State.OUTPUT_DATA_SEEK && line.First() == "Requested output data")
-                    state = State.OUTPUT_DATA;
+                    state = State.OUTPUT_DATA_HEADER;
                 else
                     throw new Exception();
             }
-            else if (state == State.INPUT_DATA_HEADER)
+            else if (state == State.INPUT_DATA_HEADER || state == State.OUTPUT_DATA_HEADER)
             {
-                if (line.First() == "field")
+                if (state == State.INPUT_DATA_HEADER && line.First() == "field")
+                {
                     state = State.INPUT_DATA;
+                    addTo.Push(endpoint.Input);
+                }
+                else if (state == State.OUTPUT_DATA_HEADER && line.First() == "field")
+                {
+                    state = State.OUTPUT_DATA;
+                    addTo.Push(endpoint.Output);
+                }
                 else
                     throw new Exception();
             }
             else if (state == State.INPUT_DATA || state == State.OUTPUT_DATA)
             {
-                addTo = state switch
-                {
-                    State.INPUT_DATA => endpoint.Input,
-                    State.OUTPUT_DATA => endpoint.Output
-                };
-
                 if (line[0].Contains("[]"))
                 {
+                    var (p0, _) = ParseFieldLine(line);
+
+                    var prop = new ObjectProperty()
+                    {
+                        Field = p0.Field.Remove(line[0].Length - 2),
+                        Description = p0.Description,
+                        Required = p0.Required
+                    };
+                    addTo.Peek().Add(prop);
+
+                    addTo.Push(prop.Properties);
+
                     continue;
                 }
-
+                
                 var (p, e) = ParseFieldLine(line);
 
-                addTo.Add(p);
+                addTo.Peek().Add(p);
                 if (!string.IsNullOrWhiteSpace(e))
                 {
                     if (state == State.INPUT_DATA)
@@ -117,8 +131,13 @@ internal class Program
 
 
                 // Look ahead if this is the end
-                if (lines.HasIndex(i + 1) && !lines[i + 1].Any())
-                    state = State.OUTPUT_DATA_SEEK;
+                if (!lines.HasIndex(i + 1) || (lines.HasIndex(i + 1) && !lines[i + 1].Any()))
+                {
+                    addTo.Pop();
+
+                    if (state == State.INPUT_DATA)
+                        state = State.OUTPUT_DATA_SEEK;
+                }
             }
             
         }
@@ -133,39 +152,64 @@ internal class Program
 
     private static (Property p, string? InputExample) ParseFieldLine(List<string> line)
     {
-        
-
         var prop = new Property();
 
         // Field
-        prop = prop with { Field = line[0] };
+        prop = prop with { Field = line.ElementAtOrDefault(0) };
 
         // Type
-        prop = prop with { Type = line[1] };
+        string type = line.ElementAtOrDefault(1);
+        if (type == "enum" || type == "enumerated")
+        {
+            prop = prop with { Type = "string" };
+
+            var enumValues = line.ElementAtOrDefault(3);
+            if (enumValues.Contains("Possible enum values:"))
+            {
+                enumValues = enumValues.Substring(enumValues.IndexOf("Possible enum values:"));
+                enumValues = enumValues.Replace("Possible enum values:", "");
+            }
+            else if (enumValues.Contains("Can be one of:"))
+            {
+                enumValues = enumValues.Substring(enumValues.IndexOf("Can be one of:"));
+                enumValues = enumValues.Replace("Can be one of:", "");
+            }
+            //else 
+                //if (enumValues == "The ISO 4217 currency code of the instrument currency.")
+
+            enumValues = enumValues.TrimEnd('.');
+            enumValues = enumValues.Trim();
+            enumValues = enumValues.Replace(" or ", ",");
+            enumValues = enumValues.Replace(", ", ",");
+            prop = prop with { EnumValues = enumValues.Split(',') };
+        }
+        else
+            prop = prop with { Type = type };
 
         // Required
+        string req = line.ElementAtOrDefault(2);
         string? descSuffix = default;
-        if (line[2] == "always" || line[2] == "required")
+        if (req == "always" || req == "required")
             prop = prop with { Required = true };
-        else if (line[2] == "optional")
+        else if (req == "optional")
             prop = prop with { Required = false };
         else
         {
             prop = prop with { Required = false };
-            descSuffix = line[2];
+            descSuffix = req;
         }
 
         // Description
         if (string.IsNullOrEmpty(descSuffix))
-            prop = prop with { Description = line[3] };
+            prop = prop with { Description = line.ElementAtOrDefault(3) };
         else
-            prop = prop with { Description = line[3] + '\n' + descSuffix };
+            prop = prop with { Description = line.ElementAtOrDefault(3) + '\n' + descSuffix };
 
         // JSON Example
         string? example = default;
         if (line.HasIndex(4))
             if (line[4].Contains('{'))
-                example = line[4];
+                example = line.ElementAtOrDefault(4);
 
         return (prop, example);
     }
@@ -179,6 +223,7 @@ internal class Program
         INPUT_DATA_HEADER,
         INPUT_DATA,
         OUTPUT_DATA_SEEK,
+        OUTPUT_DATA_HEADER,
         OUTPUT_DATA
     }
     enum SubState
@@ -200,7 +245,7 @@ internal class Program
             },
             Paths = new OpenApiPaths
             {
-                ["/PendingOrders"] = new OpenApiPathItem
+                [endpoint.Name] = new OpenApiPathItem
                 {
                     Operations = new Dictionary<OperationType, OpenApiOperation>
                     {
@@ -216,11 +261,7 @@ internal class Program
                                         Schema = new OpenApiSchema
                                         {
                                             Type = "object",
-                                            Properties = endpoint.Input.OfType<Property>().ToDictionary(e => e.Field, e => new OpenApiSchema()
-                                            {
-                                                Type = e.Type,
-                                                Description = e.Description
-                                            })
+                                            Properties = endpoint.Input.ToDictionary(e => e.Field, e => GetOpenApiProperty(e))
                                         },
                                         Examples = new Dictionary<string, OpenApiExample>
                                         {
@@ -244,11 +285,7 @@ internal class Program
                                             Schema = new OpenApiSchema
                                             {
                                                 Type = "object",
-                                                Properties = endpoint.Output.OfType<Property>().ToDictionary(e => e.Field, e => new OpenApiSchema()
-                                                {
-                                                    Type = e.Type,
-                                                    Description = e.Description
-                                                })
+                                                Properties = endpoint.Output.ToDictionary(e => e.Field, e => GetOpenApiProperty(e))
                                             },
                                             Examples = new Dictionary<string, OpenApiExample>
                                             {
@@ -269,16 +306,26 @@ internal class Program
         };
     }
 
+    static OpenApiSchema GetOpenApiProperty(IProperty p) => GetOpenApiProperty((dynamic)p);
+    static OpenApiSchema GetOpenApiProperty(Property p)
+    {
+        return new OpenApiSchema()
+        {
+            Type = p.Type,
+            Description = p.Description,
+            Enum = p.EnumValues?.Select(e => new OpenApiString(e)).ToArray()
+        };
+    }
+    static OpenApiSchema GetOpenApiProperty(ObjectProperty p)
+    {
+        return new OpenApiSchema()
+        {
+            Type = "object",
+            Properties = p.Properties.ToDictionary(e => e.Field, e => GetOpenApiProperty(e))
+        };
+    }
 
-    //    private static File[] GetFiles()
-    //    {
-    //        return new File[]
-    //        {
-    //            new File(@"C:\Users\woute\Downloads\InvestSuite - broker_custodian integration requirements  - GetPendingOrders.csv")
-    //        };
-    //    }
 
-    //    record File(string Path);
     record Endpoint(string? Name, string? Description, List<IProperty> Input, string? InputExample, List<IProperty> Output, string? OutputExample)
     {
         public Endpoint() : this(null, null, new(), null, new(), null) 
@@ -286,11 +333,22 @@ internal class Program
         }
     }
 
-    interface IProperty { }
-    record Array(Property Parent, Property[] Proprerties) : IProperty;
-    record Property(string? Field = null, string? Type = null, bool? Required = null, string? Description = null) : IProperty;
+    interface IProperty
+    {
+        public string? Field { get; }
+        public bool? Required { get; }
+        public string? Type { get; }
+        public string? Description { get; }
+    }
+    record ObjectProperty(string? Field, bool? Required, string? Description, List<IProperty> Properties) : IProperty
+    {
+        public ObjectProperty() : this(null, null, null, new())
+        {
+        }
 
-    
+        string? IProperty.Type => "object";
+    }
+    record Property(string? Field = null, string? Type = null, string[]? EnumValues = null, bool? Required = null, string? Description = null) : IProperty;
 }
 
 public static class Extensions
