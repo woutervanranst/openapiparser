@@ -2,6 +2,8 @@
 //using System.Formats.Asn1;
 //using System.Globalization;
 
+using System.Data;
+using System.Net;
 using Google.Apis.Auth.OAuth2;
 using Google.Apis.Services;
 using Google.Apis.Sheets.v4;
@@ -15,17 +17,42 @@ internal class Program
 {
     static void Main(string[] args)
     {
-
         SheetsService service = GetSheetService();
 
         var spreadsheetId = "1txAZ9ijlQbiwseeh87dOXfbEVT4DoNmb38hRON9PqaI";
 
-        var request = service.Spreadsheets.Values.Get(spreadsheetId, "GetCurrentOrders");
-        var response = request.Execute();
-        var values = response.Values
-            .Select(x => x.Select(y => (string)y).ToList()).ToList();
+        var ranges = new List<string>
+        {
+            "'GetReconciliationEvents '!A37:F59", //OrderPlaced
+            "'GetReconciliationEvents '!A60:F64", //OrderRejected
+            "'GetReconciliationEvents '!A66:F70", //OrderCancelled
+            "'GetReconciliationEvents '!A72:F76", //OrderExpired
+            "'GetReconciliationEvents '!A78:F100", //OrderExecuted
+            "'GetReconciliationEvents '!A101:F110", //OrderModified
+            "'GetReconciliationEvents '!G78:L100", //OrderExecutionCancelled
+            "'GetReconciliationEvents '!M78:R100", //OrderExecutionRebookd
+        };
 
-        Parse(values);
+        var schemas = ranges.Select(range =>
+        {
+            var request = service.Spreadsheets.Values.Get(spreadsheetId, range);
+            var response = request.Execute();
+            var values = response.Values
+                .Select(x => x.Select(y => (string)y).ToList()).ToList();
+
+            var schema = Parse(values);
+
+            return schema;
+
+        }).ToArray();
+
+
+        OpenApiDocument doc = CreateOpenApiDoc(schemas);
+        using var sw = new StringWriter();
+        //var tw = new TextWriter())
+        var w = new OpenApiYamlWriter(sw);
+        doc.SerializeAsV3(w);
+        var openApiText = sw.ToString();
     }
 
     private static SheetsService GetSheetService()
@@ -51,9 +78,9 @@ internal class Program
         return service;
     }
 
-    private static void Parse(List<List<string>> lines)
+    private static (string, OpenApiSchema) Parse(List<List<string>> lines)
     {
-        var state = State.TITLE;
+        var state = State.TITLE_AND_DESCRIPTION;
 
         var endpoint = new Endpoint();
         Stack<IList<IProperty>> addTo = new();
@@ -65,41 +92,17 @@ internal class Program
             if (!line.Any())
                 continue;
 
-            if (state == State.TITLE)
+            if (state == State.TITLE_AND_DESCRIPTION)
             {
-                endpoint = endpoint with { Name = line.Single() };
-                state = State.DESCRIPTION;
-            }
-            else if (state == State.DESCRIPTION)
-            {
-                endpoint = endpoint with { Description = line.Single() };
-                state = State.INPUT_DATA_SEEK;
-            }
-            else if (state == State.INPUT_DATA_SEEK || state == State.OUTPUT_DATA_SEEK)
-            {
-                if (state == State.INPUT_DATA_SEEK && line.First() == "Provided input data")
-                    state = State.INPUT_DATA_HEADER;
-                else if (state == State.OUTPUT_DATA_SEEK && line.First() == "Requested output data")
-                    state = State.OUTPUT_DATA_HEADER;
-                else
-                    throw new Exception();
-            }
-            else if (state == State.INPUT_DATA_HEADER || state == State.OUTPUT_DATA_HEADER)
-            {
-                if (state == State.INPUT_DATA_HEADER && line.First() == "field")
+                endpoint = endpoint with
                 {
-                    state = State.INPUT_DATA;
-                    addTo.Push(endpoint.Input);
-                }
-                else if (state == State.OUTPUT_DATA_HEADER && line.First() == "field")
-                {
-                    state = State.OUTPUT_DATA;
-                    addTo.Push(endpoint.Output);
-                }
-                else
-                    throw new Exception();
+                    Name = line[0],
+                    Description = line[3]
+                };
+                state = State.DATA;
+                addTo.Push(endpoint.Fields);
             }
-            else if (state == State.INPUT_DATA || state == State.OUTPUT_DATA)
+            else if (state == State.DATA)
             {
                 if (line[0].Contains("[]"))
                 {
@@ -117,16 +120,14 @@ internal class Program
 
                     continue;
                 }
-                
+
                 var (p, e) = ParseFieldLine(line);
 
                 addTo.Peek().Add(p);
                 if (!string.IsNullOrWhiteSpace(e))
                 {
-                    if (state == State.INPUT_DATA)
-                        endpoint = endpoint with { InputExample = e };
-                    else if (state == State.OUTPUT_DATA)
-                        endpoint = endpoint with { OutputExample = e };
+                    if (state == State.DATA)
+                        endpoint = endpoint with { Example = e };
                 }
 
 
@@ -134,20 +135,12 @@ internal class Program
                 if (!lines.HasIndex(i + 1) || (lines.HasIndex(i + 1) && !lines[i + 1].Any()))
                 {
                     addTo.Pop();
-
-                    if (state == State.INPUT_DATA)
-                        state = State.OUTPUT_DATA_SEEK;
                 }
             }
             
         }
 
-        OpenApiDocument doc = CreateOpenApiDoc(endpoint);
-        using var sw = new StringWriter();
-        //var tw = new TextWriter())
-        var w = new OpenApiYamlWriter(sw);
-        doc.SerializeAsV3(w);
-        var openApiText = sw.ToString();
+        return CreateOpenApiSchema(endpoint);
     }
 
     private static (Property p, string? InputExample) ParseFieldLine(List<string> line)
@@ -190,6 +183,10 @@ internal class Program
             prop = prop with { Type = "number" };
             descSuffix.Add($"Type: {type}");
         }
+        else if (type == "date")
+        {
+            prop = prop with { Type = "string", Format = "date" };
+        }
         else
             prop = prop with { Type = type };
 
@@ -213,9 +210,9 @@ internal class Program
 
         // JSON Example
         string? example = default;
-        if (line.HasIndex(4))
-            if (line[4].Contains('{'))
-                example = line.ElementAtOrDefault(4);
+        if (line.HasIndex(5))
+            if (line[5].Contains('{'))
+                example = line.ElementAtOrDefault(5);
 
         return (prop, example);
     }
@@ -223,14 +220,8 @@ internal class Program
 
     enum State
     {
-        TITLE,
-        DESCRIPTION,
-        INPUT_DATA_SEEK,
-        INPUT_DATA_HEADER,
-        INPUT_DATA,
-        OUTPUT_DATA_SEEK,
-        OUTPUT_DATA_HEADER,
-        OUTPUT_DATA
+        TITLE_AND_DESCRIPTION,
+        DATA
     }
     enum SubState
     {
@@ -238,7 +229,7 @@ internal class Program
         ARRAY
     }
 
-    private static OpenApiDocument CreateOpenApiDoc(Endpoint endpoint)
+    private static OpenApiDocument CreateOpenApiDoc((string, OpenApiSchema)[] schemas)
     {
         return new OpenApiDocument
         {
@@ -249,67 +240,47 @@ internal class Program
                 Contact = new OpenApiContact { Email = "info@investsuite.com" },
                 Description = "InvestSuite Broker/Custodian Agnostic API"
             },
-            Paths = new OpenApiPaths
+            Components = new OpenApiComponents
             {
-                [endpoint.Name] = new OpenApiPathItem
-                {
-                    Operations = new Dictionary<OperationType, OpenApiOperation>
-                    {
-                        [OperationType.Get] = new OpenApiOperation
-                        {
-                            Description = endpoint.Description,
-                            RequestBody = new OpenApiRequestBody
-                            {
-                                Content = new Dictionary<string, OpenApiMediaType>
-                                {
-                                    ["application/json"] = new OpenApiMediaType
-                                    {
-                                        Schema = new OpenApiSchema
-                                        {
-                                            Type = "object",
-                                            Properties = endpoint.Input.ToDictionary(e => e.Field, e => GetOpenApiProperty(e))
-                                        },
-                                        Examples = new Dictionary<string, OpenApiExample>
-                                        {
-                                            ["example"] = new OpenApiExample
-                                            {
-                                                Value = new OpenApiString(endpoint.InputExample)
-                                            }
-                                        }
-
-                                    }
-                                }
-                            },
-                            Responses = new OpenApiResponses
-                            {
-                                ["200"] = new OpenApiResponse
-                                {
-                                    Content = new Dictionary<string, OpenApiMediaType>
-                                    {
-                                        ["application/json"] = new OpenApiMediaType
-                                        {
-                                            Schema = new OpenApiSchema
-                                            {
-                                                Type = "object",
-                                                Properties = endpoint.Output.ToDictionary(e => e.Field, e => GetOpenApiProperty(e))
-                                            },
-                                            Examples = new Dictionary<string, OpenApiExample>
-                                            {
-                                                ["example"] = new OpenApiExample
-                                                {
-                                                    Value = new OpenApiString(endpoint.OutputExample)
-                                                }
-                                            }
-
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+                Schemas = schemas.ToDictionary(s => s.Item1, s => s.Item2)
             }
         };
+    }
+
+    private static (string, OpenApiSchema) CreateOpenApiSchema(Endpoint endpoint)
+    {
+        var s = new OpenApiSchema
+        {
+            Type = "object",
+            Description = endpoint.Description,
+            Properties = endpoint.Fields.ToDictionary(e => e.Field, e => GetOpenApiProperty(e)),
+            Required = endpoint.Fields.Where(e => e.Required ?? false).Select(e => e.Field).ToHashSet(),
+            Example = GetExample(endpoint.Example)
+            //    new OpenApiArray
+            //{
+            //    new OpenApiObject
+            //    {
+
+            //    }
+
+            //        new OpenApiExample
+            //        {
+            //            Value = new OpenApiString(endpoint.InputExample)
+            //        }
+            //}
+        };
+
+        return (endpoint.Name, s);
+    }
+
+    private static IOpenApiAny GetExample(string? jsonString)
+    {
+        if (jsonString == null)
+            return null;
+        
+        var json = System.Text.Json.JsonSerializer.Deserialize<dynamic>(jsonString);
+
+        return new OpenApiString(jsonString);
     }
 
     static OpenApiSchema GetOpenApiProperty(IProperty p) => GetOpenApiProperty((dynamic)p);
@@ -318,6 +289,7 @@ internal class Program
         return new OpenApiSchema()
         {
             Type = p.Type,
+            Format = p.Format,
             Description = p.Description,
             Enum = p.EnumValues?.Select(e => new OpenApiString(e)).ToArray()
         };
@@ -332,7 +304,7 @@ internal class Program
     }
 
 
-    record Endpoint(string? Name, string? Description, List<IProperty> Input, string? InputExample, List<IProperty> Output, string? OutputExample)
+    record Endpoint(string Name, string? Description, List<IProperty> Fields, string? Example, List<IProperty> Output, string? OutputExample)
     {
         public Endpoint() : this(null, null, new(), null, new(), null) 
         { 
@@ -351,10 +323,10 @@ internal class Program
         public ObjectProperty() : this(null, null, null, new())
         {
         }
-
+        
         string? IProperty.Type => "object";
     }
-    record Property(string? Field = null, string? Type = null, string[]? EnumValues = null, bool? Required = null, string? Description = null) : IProperty;
+    record Property(string? Field = null, string? Type = null, string? Format = null, string[]? EnumValues = null, bool? Required = null, string? Description = null) : IProperty;
 }
 
 public static class Extensions
